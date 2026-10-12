@@ -1,0 +1,621 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#09111f">
+  <title>NASA Asteroid Tracker</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #09111f;
+      color: #edf4ff;
+      font-synthesis: none;
+      text-rendering: optimizeLegibility;
+      --muted: #9aabc3;
+      --line: rgba(153, 181, 219, .14);
+      --panel: rgba(20, 32, 52, .82);
+      --aqua: #57e1d3;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      min-width: 320px;
+      min-height: 100vh;
+      margin: 0;
+      background:
+        radial-gradient(ellipse at 12% 3%, rgba(49, 106, 145, .24), transparent 34rem),
+        radial-gradient(ellipse at 90% 26%, rgba(80, 60, 146, .18), transparent 34rem),
+        #09111f;
+    }
+    body::before {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      background-image: radial-gradient(rgba(222, 237, 255, .55) .7px, transparent .7px);
+      background-size: 47px 47px;
+      opacity: .16;
+      content: "";
+      pointer-events: none;
+    }
+    button, input { font: inherit; }
+    .shell { width: min(100% - 40px, 1040px); margin: 0 auto; padding: 46px 0 64px; }
+    .masthead { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: .72rem; letter-spacing: .16em; }
+    .orbit-mark {
+      display: grid;
+      width: 35px;
+      height: 35px;
+      place-items: center;
+      border: 1px solid rgba(87, 225, 211, .35);
+      border-radius: 50%;
+      color: var(--aqua);
+      font-size: 1.1rem;
+      box-shadow: 0 0 25px rgba(87, 225, 211, .1);
+    }
+    .hero { max-width: 710px; margin: 53px auto 34px; text-align: center; }
+    .eyebrow { color: var(--aqua); font-size: .72rem; font-weight: 750; letter-spacing: .22em; text-transform: uppercase; }
+    h1 { margin: 13px 0 12px; font-size: clamp(2.4rem, 7vw, 4.7rem); line-height: 1.04; letter-spacing: -.055em; }
+    .hero p { margin: 0; color: var(--muted); font-size: 1.03rem; line-height: 1.7; }
+    .search-panel {
+      display: flex;
+      align-items: end;
+      gap: 14px;
+      padding: 21px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: linear-gradient(135deg, rgba(25, 42, 66, .94), rgba(15, 25, 42, .94));
+      box-shadow: 0 24px 70px rgba(0, 0, 0, .2);
+    }
+    .field { flex: 1; }
+    .field label { display: block; margin-bottom: 9px; color: #bcc9da; font-size: .76rem; font-weight: 700; letter-spacing: .09em; }
+    input[type="date"] {
+      width: 100%;
+      min-height: 48px;
+      padding: 0 13px;
+      border: 1px solid rgba(153, 181, 219, .2);
+      border-radius: 10px;
+      outline: none;
+      background: rgba(6, 14, 27, .65);
+      color: #edf4ff;
+    }
+    input[type="date"]:focus { border-color: var(--aqua); box-shadow: 0 0 0 3px rgba(87, 225, 211, .13); }
+    .search-button {
+      min-height: 48px;
+      padding: 0 22px;
+      border: 0;
+      border-radius: 10px;
+      background: linear-gradient(120deg, #7af0db, #54cbd5);
+      color: #09202a;
+      cursor: pointer;
+      font-weight: 800;
+      transition: transform .16s ease, filter .16s ease;
+    }
+    .search-button:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.06); }
+    .search-button:disabled { cursor: wait; opacity: .72; }
+    .status {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      min-height: 58px;
+      margin-top: 14px;
+      padding: 12px 15px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(15, 25, 42, .74);
+    }
+    .status-dot { padding-top: 2px; color: var(--aqua); }
+    .status[data-kind="error"] .status-dot { color: #ff9b9b; }
+    .status[data-kind="cache"] .status-dot { color: #ffc66d; }
+    .status[data-kind="loading"] .status-dot { animation: pulse 1s infinite alternate; }
+    .status-label { margin-bottom: 3px; color: var(--aqua); font-size: .64rem; font-weight: 800; letter-spacing: .13em; }
+    .status[data-kind="error"] .status-label { color: #ff9b9b; }
+    .status[data-kind="cache"] .status-label { color: #ffc66d; }
+    .status-message { color: #bac8da; font-size: .82rem; line-height: 1.5; overflow-wrap: anywhere; }
+    .results-header { display: flex; align-items: baseline; gap: 12px; margin: 31px 0 13px; }
+    .results-header h2 { margin: 0; font-size: 1.25rem; letter-spacing: -.02em; }
+    .count { color: var(--muted); font-size: .8rem; }
+    .cards { display: grid; gap: 12px; }
+    .card {
+      padding: 19px 20px 16px;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: var(--panel);
+      box-shadow: 0 12px 36px rgba(0, 0, 0, .12);
+      animation: appear .28s ease both;
+    }
+    .card-top { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+    .asteroid-icon { color: var(--aqua); font-size: 1.15rem; }
+    .asteroid-name { font-size: 1.05rem; font-weight: 750; }
+    .badge { padding: 5px 8px; border-radius: 999px; background: rgba(93, 213, 162, .12); color: #73dfaa; font-size: .62rem; font-weight: 800; letter-spacing: .07em; }
+    .badge.danger { background: rgba(255, 130, 130, .12); color: #ff9999; }
+    .metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 19px 0 14px; }
+    .metric-label { margin-bottom: 6px; color: #8195af; font-size: .63rem; font-weight: 750; letter-spacing: .1em; }
+    .metric-value { color: #e1ebf8; font-size: .91rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+    .approach { padding-top: 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: .75rem; }
+    .simulation { margin-top: 16px; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: rgba(5, 12, 23, .8); }
+    .simulation-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 14px 0; }
+    .simulation-title { color: #d9e7f6; font-size: .73rem; font-weight: 750; }
+    .simulation-note { color: #8295ad; font-size: .65rem; }
+    .flyby-canvas { display: block; width: 100%; height: 190px; }
+    .simulation-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 11px; padding: 0 14px 12px; }
+    .simulation-toggle { flex: none; padding: 7px 10px; border: 1px solid rgba(87, 225, 211, .24); border-radius: 8px; background: rgba(87, 225, 211, .1); color: var(--aqua); cursor: pointer; font-size: .72rem; font-weight: 700; }
+    .simulation-toggle:hover { background: rgba(87, 225, 211, .17); }
+    .simulation-toggle:disabled { cursor: wait; opacity: .6; }
+    .simulation-timeline { flex: 1 1 110px; min-width: 70px; accent-color: var(--aqua); cursor: pointer; }
+    .simulation-scale { flex: none; max-width: 104px; padding: 6px; border: 1px solid var(--line); border-radius: 7px; background: #0c1625; color: #b9c9db; font-size: .66rem; }
+    .simulation-phase { flex: 1 1 100%; color: #9aabc3; font-size: .66rem; text-align: left; overflow-wrap: anywhere; }
+    .empty {
+      padding: 52px 20px;
+      border: 1px dashed rgba(153, 181, 219, .19);
+      border-radius: 15px;
+      color: var(--muted);
+      text-align: center;
+    }
+    .empty-icon { margin-bottom: 9px; color: var(--aqua); font-size: 1.8rem; }
+    .empty strong { display: block; margin-bottom: 5px; color: #e1ebf8; font-size: 1.02rem; }
+    .empty[hidden], .results-header[hidden], .cards[hidden] { display: none; }
+    footer { margin-top: 42px; color: #7588a1; font-size: .72rem; text-align: center; }
+    footer a { color: #9fb7ce; text-decoration: none; }
+    @keyframes pulse { to { opacity: .3; } }
+    @keyframes appear { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
+    @media (max-width: 600px) {
+      .shell { width: min(100% - 28px, 1040px); padding-top: 24px; }
+      .hero { margin: 42px auto 25px; }
+      .search-panel { align-items: stretch; flex-direction: column; padding: 16px; }
+      .search-button { width: 100%; }
+      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .card { padding: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="masthead">
+      <span class="orbit-mark" aria-hidden="true">✦</span>
+      <span>NASA <span aria-hidden="true">/</span> NEOWS</span>
+      <span>·</span>
+      <span>NEAR-EARTH OBJECT TRACKER</span>
+    </header>
+
+    <section class="hero">
+      <div class="eyebrow">Исследуйте космос рядом</div>
+      <h1>Близкие встречи</h1>
+      <p>Узнайте, какие астероиды пролетают рядом с Землёй, и посмотрите скорость, размер и расстояние до каждого объекта.</p>
+    </section>
+
+    <form id="search-form" class="search-panel">
+      <div class="field">
+        <label for="date">ДАТА СБЛИЖЕНИЯ</label>
+        <input id="date" name="date" type="date" required>
+      </div>
+      <button id="submit" class="search-button" type="submit">Показать астероиды <span aria-hidden="true">→</span></button>
+    </form>
+
+    <section id="status" class="status" data-kind="ready" role="status" aria-live="polite">
+      <span class="status-dot" aria-hidden="true">●</span>
+      <div>
+        <div id="status-label" class="status-label">ГОТОВО К ЗАПРОСУ</div>
+        <div id="status-message" class="status-message">Выберите дату, чтобы загрузить данные NASA.</div>
+      </div>
+    </section>
+
+    <section id="results-header" class="results-header" hidden>
+      <h2>Объекты сближения</h2>
+      <span id="count" class="count"></span>
+    </section>
+    <section id="cards" class="cards" aria-label="Список астероидов" hidden></section>
+    <section id="empty" class="empty">
+      <div class="empty-icon" aria-hidden="true">✧</div>
+      <strong id="empty-title">Выберите дату</strong>
+      <span id="empty-message">Космос ближе, чем кажется.</span>
+    </section>
+
+    <footer>
+      Данные предоставлены <a href="https://api.nasa.gov/" target="_blank" rel="noreferrer">NASA NeoWs API</a>.
+      Ваш API-ключ остаётся на локальном сервере.
+    </footer>
+  </main>
+  <script>
+    const form = document.querySelector("#search-form");
+    const dateInput = document.querySelector("#date");
+    const submitButton = document.querySelector("#submit");
+    const statusPanel = document.querySelector("#status");
+    const statusLabel = document.querySelector("#status-label");
+    const statusMessage = document.querySelector("#status-message");
+    const cards = document.querySelector("#cards");
+    const resultsHeader = document.querySelector("#results-header");
+    const count = document.querySelector("#count");
+    const empty = document.querySelector("#empty");
+    const emptyTitle = document.querySelector("#empty-title");
+    const emptyMessage = document.querySelector("#empty-message");
+
+    const today = new Date();
+    dateInput.value = [
+      today.getFullYear(),
+      String(today.getMonth() + 1).padStart(2, "0"),
+      String(today.getDate()).padStart(2, "0")
+    ].join("-");
+
+    function setStatus(kind, label, message) {
+      statusPanel.dataset.kind = kind;
+      statusLabel.textContent = label;
+      statusMessage.textContent = message;
+    }
+
+    function showEmpty(title, message) {
+      cards.hidden = true;
+      resultsHeader.hidden = true;
+      empty.hidden = false;
+      emptyTitle.textContent = title;
+      emptyMessage.textContent = message;
+    }
+
+    function metric(label, value) {
+      const wrapper = document.createElement("div");
+      const caption = document.createElement("div");
+      const content = document.createElement("div");
+      caption.className = "metric-label";
+      caption.textContent = label;
+      content.className = "metric-value";
+      content.textContent = value ?? "—";
+      wrapper.append(caption, content);
+      return wrapper;
+    }
+
+    function asteroidCard(asteroid) {
+      const card = document.createElement("article");
+      card.className = "card";
+
+      const top = document.createElement("div");
+      top.className = "card-top";
+      const icon = document.createElement("span");
+      icon.className = "asteroid-icon";
+      icon.textContent = "◉";
+      const name = document.createElement("span");
+      name.className = "asteroid-name";
+      name.textContent = asteroid.name;
+      const badge = document.createElement("span");
+      badge.className = asteroid.hazardous ? "badge danger" : "badge";
+      badge.textContent = asteroid.hazardous ? "ПОТЕНЦИАЛЬНО ОПАСЕН" : "БЕЗОПАСНО";
+      top.append(icon, name, badge);
+
+      const diameterMin = asteroid.diameter_min_km == null ? "—" : asteroid.diameter_min_km.toFixed(4);
+      const diameterMax = asteroid.diameter_max_km == null ? "—" : asteroid.diameter_max_km.toFixed(4);
+      const measurements = document.createElement("div");
+      measurements.className = "metrics";
+      measurements.append(
+        metric("ДИАМЕТР, КМ", `${diameterMin} — ${diameterMax}`),
+        metric("СКОРОСТЬ, КМ/С", asteroid.velocity_km_s),
+        metric("МИН. РАССТОЯНИЕ, КМ", asteroid.miss_distance_km)
+      );
+
+      const approach = document.createElement("div");
+      approach.className = "approach";
+      approach.textContent = `Сближение (UTC): ${asteroid.approach_time_utc ?? "—"}`;
+      card.append(top, measurements, approach, createJplTrajectorySimulation(asteroid));
+      return card;
+    }
+
+    function createJplTrajectorySimulation(asteroid) {
+      const panel = document.createElement("section");
+      panel.className = "simulation";
+      panel.setAttribute("aria-label", `Расчёт траектории астероида ${asteroid.name} относительно Земли`);
+      const hasExactApproachTime = typeof asteroid.approach_time_utc === "string"
+        && /\d{2}:\d{2}/.test(asteroid.approach_time_utc);
+
+      const heading = document.createElement("div");
+      heading.className = "simulation-heading";
+      const title = document.createElement("span");
+      title.className = "simulation-title";
+      title.textContent = "Траектория по JPL Horizons";
+      const note = document.createElement("span");
+      note.className = "simulation-note";
+      const missDistance = Number.parseFloat(asteroid.miss_distance_km);
+      const formattedMissDistance = Number.isFinite(missDistance)
+        ? new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 }).format(missDistance)
+        : "—";
+      note.textContent = `Близкое сближение NASA: ${formattedMissDistance} км`;
+      heading.append(title, note);
+
+      const canvas = document.createElement("canvas");
+      canvas.className = "flyby-canvas";
+      canvas.setAttribute("role", "img");
+      canvas.setAttribute("aria-label", `Эфемеридная траектория ${asteroid.name}`);
+
+      const controls = document.createElement("div");
+      controls.className = "simulation-controls";
+      const toggle = document.createElement("button");
+      toggle.className = "simulation-toggle";
+      toggle.type = "button";
+      toggle.textContent = hasExactApproachTime ? "Загрузить JPL" : "Нет времени сближения";
+      toggle.disabled = !hasExactApproachTime;
+
+      const timeline = document.createElement("input");
+      timeline.className = "simulation-timeline";
+      timeline.type = "range";
+      timeline.min = "0";
+      timeline.max = "1000";
+      timeline.value = "500";
+      timeline.disabled = true;
+      timeline.setAttribute("aria-label", "Время на траектории JPL Horizons");
+
+      const scale = document.createElement("select");
+      scale.className = "simulation-scale";
+      scale.setAttribute("aria-label", "Вертикальный масштаб расстояния");
+      for (const millions of [10, 50, 100, 500, 1000]) {
+        const option = document.createElement("option");
+        option.value = String(millions * 1_000_000);
+        option.textContent = `${millions} млн км`;
+        scale.append(option);
+      }
+      const phase = document.createElement("span");
+      phase.className = "simulation-phase";
+      phase.textContent = hasExactApproachTime
+        ? "Нажмите, чтобы получить расчёт"
+        : "Нет точного времени сближения";
+      controls.append(toggle, timeline, scale, phase);
+      panel.append(heading, canvas, controls);
+
+      const context = canvas.getContext("2d");
+      let trajectory = null;
+      let progress = 0.5;
+      let playing = false;
+      let loading = false;
+      let frame = 0;
+      let lastFrame = 0;
+
+      function currentPoint() {
+        const points = trajectory.points;
+        const at = progress * (points.length - 1);
+        const index = Math.min(Math.floor(at), points.length - 2);
+        const fraction = at - index;
+        const first = points[index];
+        const second = points[index + 1];
+        return {
+          hours: first.hours_from_approach
+            + (second.hours_from_approach - first.hours_from_approach) * fraction,
+          distance: first.distance_km
+            + (second.distance_km - first.distance_km) * fraction
+        };
+      }
+
+      function draw() {
+        const { width, height } = canvas.getBoundingClientRect();
+        if (!width || !context) return;
+        const ratio = Math.min(window.devicePixelRatio || 1, 2);
+        if (canvas.width !== Math.round(width * ratio) || canvas.height !== Math.round(height * ratio)) {
+          canvas.width = Math.round(width * ratio);
+          canvas.height = Math.round(height * ratio);
+        }
+        context.setTransform(ratio, 0, 0, ratio, 0, 0);
+        context.fillStyle = "#050c17";
+        context.fillRect(0, 0, width, height);
+
+        if (!trajectory) {
+          context.font = "13px system-ui, sans-serif";
+          context.textAlign = "center";
+          context.fillStyle = loading ? "#57e1d3" : "#9aabc3";
+          context.fillText(
+            loading ? "Запрашиваем эфемериды NASA/JPL Horizons…" : "Положения астероида ещё не загружены",
+            width / 2,
+            height / 2
+          );
+          return;
+        }
+
+        const left = 52;
+        const right = width - 12;
+        const top = 24;
+        const bottom = height - 35;
+        const rangeKm = Number(scale.value);
+        const xForTime = (hours) => left + ((hours + 6) / 12) * (right - left);
+        const yForDistance = (km) => bottom - Math.min(km, rangeKm) / rangeKm * (bottom - top);
+        const formatMillions = (km) => new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 })
+          .format(km / 1_000_000);
+
+        for (const fraction of [0, 0.5, 1]) {
+          const y = bottom - fraction * (bottom - top);
+          context.beginPath();
+          context.moveTo(left, y);
+          context.lineTo(right, y);
+          context.strokeStyle = "rgba(153, 181, 219, .16)";
+          context.stroke();
+          context.font = "9px system-ui, sans-serif";
+          context.textAlign = "right";
+          context.fillStyle = "#8295ad";
+          context.fillText(`${formatMillions(rangeKm * fraction)} млн`, left - 6, y + 3);
+        }
+
+        context.beginPath();
+        context.moveTo(xForTime(0), top);
+        context.lineTo(xForTime(0), bottom);
+        context.setLineDash([3, 4]);
+        context.strokeStyle = "rgba(255, 198, 109, .5)";
+        context.stroke();
+        context.setLineDash([]);
+
+        context.beginPath();
+        trajectory.points.forEach((point, index) => {
+          const x = xForTime(point.hours_from_approach);
+          const y = yForDistance(point.distance_km);
+          if (index === 0) context.moveTo(x, y);
+          else context.lineTo(x, y);
+        });
+        context.strokeStyle = "rgba(87, 225, 211, .88)";
+        context.lineWidth = 2;
+        context.stroke();
+
+        for (const hours of [-6, -3, 0, 3, 6]) {
+          const x = xForTime(hours);
+          context.beginPath();
+          context.moveTo(x, bottom);
+          context.lineTo(x, bottom + 4);
+          context.strokeStyle = "rgba(153, 181, 219, .4)";
+          context.stroke();
+          context.font = "9px system-ui, sans-serif";
+          context.textAlign = "center";
+          context.fillStyle = "#8295ad";
+          context.fillText(hours === 0 ? "сближение" : `${hours > 0 ? "+" : ""}${hours} ч`, x, height - 8);
+        }
+
+        const earthX = xForTime(0);
+        context.save();
+        context.shadowColor = "rgba(61, 154, 255, .7)";
+        context.shadowBlur = 12;
+        const earthGlow = context.createRadialGradient(earthX - 2, bottom - 2, 1, earthX, bottom, 7);
+        earthGlow.addColorStop(0, "#b8edff");
+        earthGlow.addColorStop(.45, "#4196dc");
+        earthGlow.addColorStop(1, "#155098");
+        context.beginPath();
+        context.arc(earthX, bottom, 6, 0, Math.PI * 2);
+        context.fillStyle = earthGlow;
+        context.fill();
+        context.restore();
+        context.font = "9px system-ui, sans-serif";
+        context.textAlign = "center";
+        context.fillStyle = "#c8d8e9";
+        context.fillText("Земля*", earthX, bottom - 10);
+        context.textAlign = "left";
+        context.fillStyle = "#8295ad";
+        context.fillText("*Земля увеличена; вертикальный масштаб общий.", left, 12);
+
+        const current = currentPoint();
+        const objectX = xForTime(current.hours);
+        const objectY = yForDistance(current.distance);
+        const glow = context.createRadialGradient(objectX, objectY, 1, objectX, objectY, 11);
+        glow.addColorStop(0, "#fff");
+        glow.addColorStop(.25, "#8ff4ed");
+        glow.addColorStop(1, "rgba(87, 225, 211, 0)");
+        context.beginPath();
+        context.arc(objectX, objectY, 11, 0, Math.PI * 2);
+        context.fillStyle = glow;
+        context.fill();
+        context.beginPath();
+        context.arc(objectX, objectY, 4, 0, Math.PI * 2);
+        context.fillStyle = "#d6fffa";
+        context.fill();
+        const distanceText = current.distance > rangeKm
+          ? `>${formatMillions(rangeKm)} млн км`
+          : `${formatMillions(current.distance)} млн км`;
+        phase.textContent = `${current.hours < 0 ? "−" : "+"}${Math.abs(current.hours).toFixed(1)} ч · ${distanceText}`;
+      }
+
+      function animate(timestamp) {
+        if (!playing || !canvas.isConnected || !trajectory) {
+          playing = false;
+          return;
+        }
+        if (!lastFrame) lastFrame = timestamp;
+        progress += Math.min((timestamp - lastFrame) / 1000, 0.1) / 18;
+        lastFrame = timestamp;
+        if (progress >= 1) progress = 0;
+        timeline.value = String(Math.round(progress * 1000));
+        draw();
+        frame = window.requestAnimationFrame(animate);
+      }
+
+      async function loadTrajectory() {
+        if (loading || !hasExactApproachTime) return;
+        loading = true;
+        toggle.disabled = true;
+        toggle.textContent = "Запрос к JPL…";
+        phase.textContent = "Загрузка расчёта";
+        draw();
+        try {
+          const query = new URLSearchParams({
+            name: asteroid.name,
+            approach_time: asteroid.approach_time_utc
+          });
+          const response = await fetch(`/api/trajectory?${query}`);
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.error || "JPL Horizons не вернул траекторию.");
+          if (!Array.isArray(payload.points) || payload.points.length < 2) {
+            throw new Error("В ответе JPL Horizons недостаточно точек траектории.");
+          }
+          trajectory = payload;
+          progress = 0.5;
+          timeline.value = "500";
+          timeline.disabled = false;
+          scale.disabled = false;
+          note.textContent = `${payload.target} · расчёт JPL · эфемериды могут быть неопределённы`;
+          phase.textContent = "Расчёт по текущей орбите JPL";
+          toggle.textContent = "▶ Запустить";
+          toggle.disabled = false;
+          draw();
+        } catch (error) {
+          phase.textContent = error.message;
+          toggle.textContent = "Повторить запрос JPL";
+          toggle.disabled = false;
+        } finally {
+          loading = false;
+        }
+      }
+
+      toggle.addEventListener("click", () => {
+        if (!trajectory) {
+          loadTrajectory();
+          return;
+        }
+        playing = !playing;
+        toggle.textContent = playing ? "Ⅱ Пауза" : "▶ Продолжить";
+        if (playing) {
+          lastFrame = 0;
+          frame = window.requestAnimationFrame(animate);
+        } else {
+          window.cancelAnimationFrame(frame);
+        }
+      });
+      timeline.addEventListener("input", () => {
+        progress = Number(timeline.value) / 1000;
+        draw();
+      });
+      scale.addEventListener("change", draw);
+      new ResizeObserver(draw).observe(canvas);
+      draw();
+      return panel;
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!dateInput.value) {
+        dateInput.focus();
+        return;
+      }
+
+      submitButton.disabled = true;
+      submitButton.textContent = "Загружаем…";
+      cards.replaceChildren();
+      showEmpty("Ищем астероиды", "Запрашиваем данные NASA NeoWs.");
+      setStatus("loading", "ЗАГРУЗКА", "Подключаемся к NASA NeoWs…");
+
+      try {
+        const response = await fetch(`/api/asteroids?date=${encodeURIComponent(dateInput.value)}`);
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || "Не удалось получить данные.");
+
+        setStatus(payload.source.startsWith("Нет связи") ? "cache" : "success",
+          payload.source.startsWith("Нет связи") ? "ЛОКАЛЬНЫЙ КЭШ" : "ДАННЫЕ ЗАГРУЖЕНЫ",
+          payload.source);
+
+        if (payload.asteroids.length === 0) {
+          showEmpty("Астероиды не найдены", `Для ${payload.date} NASA не сообщило об объектах сближения.`);
+          return;
+        }
+
+        cards.replaceChildren(...payload.asteroids.map(asteroidCard));
+        count.textContent = `${payload.asteroids.length} ${payload.asteroids.length === 1 ? "объект" : "объектов"}`;
+        resultsHeader.hidden = false;
+        cards.hidden = false;
+        empty.hidden = true;
+      } catch (error) {
+        setStatus("error", "НЕ УДАЛОСЬ ЗАГРУЗИТЬ", error.message);
+        showEmpty("Данные недоступны", "Проверьте дату и подключение к интернету, затем попробуйте ещё раз.");
+      } finally {
+        submitButton.disabled = false;
+        submitButton.innerHTML = 'Показать астероиды <span aria-hidden="true">→</span>';
+      }
+    });
+  </script>
+</body>
+</html>
