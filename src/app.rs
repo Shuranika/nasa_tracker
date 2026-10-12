@@ -5,6 +5,7 @@ use eframe::egui;
 
 use crate::{cache, date, models::Asteroid, nasa::NasaClient};
 
+#[derive(Debug)]
 struct Loaded {
     asteroids: Vec<Asteroid>,
     source: String,
@@ -202,4 +203,82 @@ fn number(value: Option<f64>) -> String {
     value
         .map(|number| format!("{number:.6}"))
         .unwrap_or_else(|| "—".to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn date(day: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(2026, 10, day).unwrap()
+    }
+
+    fn asteroid(name: &str) -> Asteroid {
+        Asteroid {
+            name: name.to_owned(),
+            diameter_min_km: None,
+            diameter_max_km: None,
+            velocity_km_s: None,
+            miss_distance_km: None,
+            hazardous: false,
+            approach_time_utc: None,
+        }
+    }
+
+    #[test]
+    fn uses_cache_only_for_the_requested_date_after_fetch_failure() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("cache.json");
+        cache::write(&path, date(12), &[asteroid("Cached")]).unwrap();
+
+        let loaded = fetch_and_cache(date(12), Ok(path.clone()), false, |_| {
+            anyhow::bail!("network unavailable")
+        })
+        .unwrap();
+        assert_eq!(loaded.asteroids, vec![asteroid("Cached")]);
+        assert!(loaded.source.contains("локальный кэш"));
+
+        let error = fetch_and_cache(date(13), Ok(path), false, |_| {
+            anyhow::bail!("network unavailable")
+        })
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("кэше нет"));
+    }
+
+    #[test]
+    fn empty_network_result_is_success_and_cache_write_failure_is_reported() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("cache.json");
+        let loaded =
+            fetch_and_cache(date(12), Ok(path.clone()), false, |_| Ok(Vec::new())).unwrap();
+        assert!(loaded.asteroids.is_empty());
+        assert_eq!(cache::read(&path, date(12)).unwrap(), Some(Vec::new()));
+
+        let blocker = directory.path().join("file");
+        std::fs::write(&blocker, "not a directory").unwrap();
+        let loaded = fetch_and_cache(date(12), Ok(blocker.join("cache.json")), false, |_| {
+            Ok(vec![asteroid("Online")])
+        })
+        .unwrap();
+        assert_eq!(loaded.asteroids, vec![asteroid("Online")]);
+        assert!(loaded.source.contains("Не удалось сохранить кэш"));
+    }
+
+    #[test]
+    fn fetch_success_is_not_blocked_by_unavailable_cache_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let blocker = directory.path().join("file");
+        std::fs::write(&blocker, "not a directory").unwrap();
+
+        let loaded = fetch_and_cache(
+            date(12),
+            Err(anyhow::anyhow!("data directory unavailable")),
+            false,
+            |_| Ok(vec![asteroid("Online")]),
+        )
+        .unwrap();
+        assert_eq!(loaded.asteroids, vec![asteroid("Online")]);
+        assert!(loaded.source.contains("Не удалось определить папку кэша"));
+    }
 }

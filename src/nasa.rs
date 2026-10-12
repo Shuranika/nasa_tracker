@@ -68,8 +68,12 @@ impl NasaClient {
     }
 
     fn with_endpoint(endpoint: &str, api_key: String) -> Result<Self> {
+        Self::with_timeout(endpoint, api_key, std::time::Duration::from_secs(20))
+    }
+
+    fn with_timeout(endpoint: &str, api_key: String, timeout: std::time::Duration) -> Result<Self> {
         let http = reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_secs(20))
+            .timeout(timeout)
             .build()
             .context("Не удалось создать HTTP-клиент NASA")?;
         Ok(Self {
@@ -148,6 +152,43 @@ fn parse_feed(feed: FeedResponse, date: &str) -> Result<Vec<Asteroid>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+        thread::JoinHandle,
+        time::Duration,
+    };
+
+    fn mock_server(
+        status: &'static str,
+        body: &'static str,
+        delay: Duration,
+    ) -> (String, JoinHandle<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let worker = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0; 1024];
+            loop {
+                let bytes_read = stream.read(&mut buffer).unwrap();
+                request.extend_from_slice(&buffer[..bytes_read]);
+                if bytes_read == 0 || request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            if !delay.is_zero() {
+                std::thread::sleep(delay);
+            }
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.write_all(response.as_bytes());
+            String::from_utf8_lossy(&request).into_owned()
+        });
+        (format!("http://{address}"), worker)
+    }
 
     #[test]
     fn parses_empty_day_and_rejects_missing_day() {
@@ -213,5 +254,43 @@ mod tests {
     fn client_endpoint_can_be_replaced_for_local_http_tests() {
         let client = NasaClient::with_endpoint("http://127.0.0.1:1", DEMO_KEY.to_owned());
         assert!(client.is_ok());
+    }
+
+    #[test]
+    fn fetch_sends_selected_day_and_maps_local_feed_response() {
+        let body = r#"{"near_earth_objects":{"2026-10-12":[{"name":"Local test"}]}}"#;
+        let (endpoint, server) = mock_server("200 OK", body, Duration::ZERO);
+        let client = NasaClient::with_endpoint(&endpoint, "local-key".to_owned()).unwrap();
+        let asteroids = client
+            .fetch(NaiveDate::from_ymd_opt(2026, 10, 12).unwrap())
+            .unwrap();
+        let request = server.join().unwrap();
+
+        assert_eq!(asteroids.len(), 1);
+        assert_eq!(asteroids[0].name, "Local test");
+        assert!(request.contains("start_date=2026-10-12"));
+        assert!(request.contains("end_date=2026-10-12"));
+        assert!(request.contains("api_key=local-key"));
+    }
+
+    #[test]
+    fn fetch_reports_http_status_and_timeout_errors() {
+        let (endpoint, server) = mock_server("500 Internal Server Error", "{}", Duration::ZERO);
+        let client = NasaClient::with_endpoint(&endpoint, "local-key".to_owned()).unwrap();
+        let error = client
+            .fetch(NaiveDate::from_ymd_opt(2026, 10, 12).unwrap())
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("500"));
+        server.join().unwrap();
+
+        let (endpoint, server) = mock_server("200 OK", "{}", Duration::from_millis(150));
+        let client =
+            NasaClient::with_timeout(&endpoint, "local-key".to_owned(), Duration::from_millis(25))
+                .unwrap();
+        let error = client
+            .fetch(NaiveDate::from_ymd_opt(2026, 10, 12).unwrap())
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("NASA NeoWs"));
+        server.join().unwrap();
     }
 }
