@@ -133,6 +133,16 @@
     .metric-label { margin-bottom: 6px; color: #8195af; font-size: .63rem; font-weight: 750; letter-spacing: .1em; }
     .metric-value { color: #e1ebf8; font-size: .91rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
     .approach { padding-top: 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: .75rem; }
+    .simulation { margin-top: 16px; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: rgba(5, 12, 23, .8); }
+    .simulation-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 14px 0; }
+    .simulation-title { color: #d9e7f6; font-size: .73rem; font-weight: 750; }
+    .simulation-note { color: #8295ad; font-size: .65rem; }
+    .flyby-canvas { display: block; width: 100%; height: 190px; }
+    .simulation-controls { display: flex; align-items: center; gap: 11px; padding: 0 14px 12px; }
+    .simulation-toggle { flex: none; padding: 7px 10px; border: 1px solid rgba(87, 225, 211, .24); border-radius: 8px; background: rgba(87, 225, 211, .1); color: var(--aqua); cursor: pointer; font-size: .72rem; font-weight: 700; }
+    .simulation-toggle:hover { background: rgba(87, 225, 211, .17); }
+    .simulation-timeline { width: 100%; accent-color: var(--aqua); cursor: pointer; }
+    .simulation-phase { flex: none; min-width: 116px; color: #9aabc3; font-size: .66rem; text-align: right; }
     .empty {
       padding: 52px 20px;
       border: 1px dashed rgba(153, 181, 219, .19);
@@ -281,8 +291,194 @@
       const approach = document.createElement("div");
       approach.className = "approach";
       approach.textContent = `Сближение (UTC): ${asteroid.approach_time_utc ?? "—"}`;
-      card.append(top, measurements, approach);
+      card.append(top, measurements, approach, createFlybySimulation(asteroid));
       return card;
+    }
+
+    function createFlybySimulation(asteroid) {
+      const panel = document.createElement("section");
+      panel.className = "simulation";
+      panel.setAttribute("aria-label", `Схема пролёта астероида ${asteroid.name} мимо Земли`);
+
+      const heading = document.createElement("div");
+      heading.className = "simulation-heading";
+      const title = document.createElement("span");
+      title.className = "simulation-title";
+      title.textContent = "Схема сближения";
+      const note = document.createElement("span");
+      note.className = "simulation-note";
+      const numericDistance = Number.parseFloat(asteroid.miss_distance_km);
+      const formattedDistance = Number.isFinite(numericDistance)
+        ? new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 }).format(numericDistance)
+        : "—";
+      note.textContent = `Минимум NASA: ${formattedDistance} км · схема не в масштабе`;
+      heading.append(title, note);
+
+      const canvas = document.createElement("canvas");
+      canvas.className = "flyby-canvas";
+      canvas.setAttribute("role", "img");
+      canvas.setAttribute("aria-label", `Анимация пролёта ${asteroid.name} рядом с Землёй`);
+
+      const controls = document.createElement("div");
+      controls.className = "simulation-controls";
+      const toggle = document.createElement("button");
+      toggle.className = "simulation-toggle";
+      toggle.type = "button";
+      toggle.textContent = "▶ Запустить";
+      toggle.setAttribute("aria-label", "Запустить анимацию пролёта");
+      const timeline = document.createElement("input");
+      timeline.className = "simulation-timeline";
+      timeline.type = "range";
+      timeline.min = "0";
+      timeline.max = "1000";
+      timeline.value = "0";
+      timeline.setAttribute("aria-label", "Положение астероида на траектории");
+      const phase = document.createElement("span");
+      phase.className = "simulation-phase";
+      controls.append(toggle, timeline, phase);
+      panel.append(heading, canvas, controls);
+
+      const context = canvas.getContext("2d");
+      let progress = 0;
+      let playing = false;
+      let frame = 0;
+      let lastFrame = 0;
+
+      function phaseLabel() {
+        if (progress < 0.44) return "Приближение";
+        if (progress > 0.56) return "Удаление";
+        return "Сближение";
+      }
+
+      function draw() {
+        const bounds = canvas.getBoundingClientRect();
+        if (!bounds.width || !context) return;
+        const ratio = Math.min(window.devicePixelRatio || 1, 2);
+        const width = bounds.width;
+        const height = bounds.height;
+        if (canvas.width !== Math.round(width * ratio) || canvas.height !== Math.round(height * ratio)) {
+          canvas.width = Math.round(width * ratio);
+          canvas.height = Math.round(height * ratio);
+        }
+        context.setTransform(ratio, 0, 0, ratio, 0, 0);
+        context.clearRect(0, 0, width, height);
+        context.fillStyle = "#050c17";
+        context.fillRect(0, 0, width, height);
+
+        for (let index = 0; index < 34; index += 1) {
+          const x = (index * 83 + 17) % Math.max(width, 1);
+          const y = (index * 47 + 11) % height;
+          context.beginPath();
+          context.arc(x, y, index % 6 === 0 ? 1.2 : .7, 0, Math.PI * 2);
+          context.fillStyle = index % 3 === 0 ? "rgba(137, 196, 228, .48)" : "rgba(207, 226, 245, .34)";
+          context.fill();
+        }
+
+        const centerX = width * .52;
+        const centerY = height * .49;
+        const earthRadius = Math.min(22, height * .12);
+        const missDistance = Number.parseFloat(asteroid.miss_distance_km);
+        const distanceRatio = Number.isFinite(missDistance) && missDistance > 0
+          ? Math.log10(Math.max(missDistance / 6371, 1))
+          : 1;
+        const offset = Math.max(earthRadius + 13, Math.min(height * .29, earthRadius + 12 + distanceRatio * 8));
+        const pathY = centerY + offset;
+        const startX = Math.max(35, width * .09);
+        const endX = Math.min(width - 35, width * .92);
+        const asteroidX = startX + (endX - startX) * progress;
+        const asteroidRadius = Math.max(4, Math.min(8, (asteroid.diameter_max_km || .1) * 2.6));
+
+        context.setLineDash([5, 6]);
+        context.beginPath();
+        context.moveTo(startX, pathY);
+        context.lineTo(endX, pathY);
+        context.strokeStyle = "rgba(121, 210, 224, .58)";
+        context.lineWidth = 1.5;
+        context.stroke();
+        context.setLineDash([]);
+
+        context.beginPath();
+        context.moveTo(centerX, centerY + earthRadius + 2);
+        context.lineTo(centerX, pathY - asteroidRadius - 3);
+        context.strokeStyle = "rgba(255, 199, 112, .78)";
+        context.lineWidth = 1;
+        context.stroke();
+
+        context.save();
+        context.shadowColor = "rgba(61, 154, 255, .7)";
+        context.shadowBlur = 21;
+        const earthGlow = context.createRadialGradient(centerX - 7, centerY - 8, 2, centerX, centerY, earthRadius * 1.35);
+        earthGlow.addColorStop(0, "#b8edff");
+        earthGlow.addColorStop(.28, "#4196dc");
+        earthGlow.addColorStop(.75, "#155098");
+        earthGlow.addColorStop(1, "#0a2145");
+        context.beginPath();
+        context.arc(centerX, centerY, earthRadius, 0, Math.PI * 2);
+        context.fillStyle = earthGlow;
+        context.fill();
+        context.restore();
+
+        context.beginPath();
+        context.ellipse(centerX, centerY, earthRadius * 1.35, earthRadius * .43, -.22, Math.PI * .1, Math.PI * 1.1);
+        context.strokeStyle = "rgba(173, 224, 255, .42)";
+        context.lineWidth = 1;
+        context.stroke();
+
+        context.font = "11px system-ui, sans-serif";
+        context.textAlign = "center";
+        context.fillStyle = "#c8d8e9";
+        context.fillText("ЗЕМЛЯ", centerX, centerY + earthRadius + 17);
+        context.fillStyle = "#ffc66d";
+        context.fillText("точка максимального сближения", centerX, pathY + 17);
+
+        const objectGlow = context.createRadialGradient(asteroidX - 2, pathY - 2, 1, asteroidX, pathY, asteroidRadius * 2.8);
+        objectGlow.addColorStop(0, "#ffffff");
+        objectGlow.addColorStop(.3, "#8ff4ed");
+        objectGlow.addColorStop(1, "rgba(87, 225, 211, 0)");
+        context.beginPath();
+        context.arc(asteroidX, pathY, asteroidRadius * 2.8, 0, Math.PI * 2);
+        context.fillStyle = objectGlow;
+        context.fill();
+        context.beginPath();
+        context.arc(asteroidX, pathY, asteroidRadius, 0, Math.PI * 2);
+        context.fillStyle = "#d6fffa";
+        context.fill();
+        phase.textContent = phaseLabel();
+      }
+
+      function animate(timestamp) {
+        if (!playing || !canvas.isConnected) {
+          playing = false;
+          return;
+        }
+        if (!lastFrame) lastFrame = timestamp;
+        const elapsed = Math.min((timestamp - lastFrame) / 1000, .1);
+        lastFrame = timestamp;
+        progress += elapsed / 12;
+        if (progress >= 1) progress = 0;
+        timeline.value = String(Math.round(progress * 1000));
+        draw();
+        frame = window.requestAnimationFrame(animate);
+      }
+
+      toggle.addEventListener("click", () => {
+        playing = !playing;
+        toggle.textContent = playing ? "Ⅱ Пауза" : "▶ Продолжить";
+        toggle.setAttribute("aria-label", playing ? "Приостановить анимацию" : "Продолжить анимацию");
+        if (playing) {
+          lastFrame = 0;
+          frame = window.requestAnimationFrame(animate);
+        } else {
+          window.cancelAnimationFrame(frame);
+        }
+      });
+      timeline.addEventListener("input", () => {
+        progress = Number(timeline.value) / 1000;
+        draw();
+      });
+      new ResizeObserver(draw).observe(canvas);
+      draw();
+      return panel;
     }
 
     form.addEventListener("submit", async (event) => {
