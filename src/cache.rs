@@ -67,3 +67,80 @@ pub fn write(path: &Path, date: NaiveDate, asteroids: &[Asteroid]) -> Result<()>
         })
         .context("Не удалось атомарно сохранить JSON-кэш")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn date(day: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(2026, 10, day).unwrap()
+    }
+
+    fn asteroid(name: &str) -> Asteroid {
+        Asteroid {
+            name: name.to_owned(),
+            diameter_min_km: None,
+            diameter_max_km: None,
+            velocity_km_s: None,
+            miss_distance_km: None,
+            hazardous: false,
+            approach_time_utc: None,
+        }
+    }
+
+    #[test]
+    fn missing_cache_is_a_cache_miss() {
+        let directory = tempfile::tempdir().unwrap();
+        assert_eq!(
+            read(&directory.path().join("cache.json"), date(12)).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn updates_one_date_without_overwriting_other_dates() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("cache.json");
+        write(&path, date(12), &[asteroid("First")]).unwrap();
+        write(&path, date(13), &[asteroid("Second")]).unwrap();
+        write(&path, date(12), &[asteroid("Updated")]).unwrap();
+
+        assert_eq!(
+            read(&path, date(12)).unwrap(),
+            Some(vec![asteroid("Updated")])
+        );
+        assert_eq!(
+            read(&path, date(13)).unwrap(),
+            Some(vec![asteroid("Second")])
+        );
+        assert_eq!(read(&path, date(14)).unwrap(), None);
+    }
+
+    #[test]
+    fn reports_corrupt_or_unsupported_cache() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("cache.json");
+        std::fs::write(&path, "{not json").unwrap();
+        assert!(read(&path, date(12)).is_err());
+
+        std::fs::write(&path, r#"{"version":99,"dates":{"2026-10-12":[]}}"#).unwrap();
+        assert!(read(&path, date(12))
+            .unwrap_err()
+            .to_string()
+            .contains("версия"));
+        assert!(write(&path, date(12), &[asteroid("Ignored")]).is_err());
+    }
+
+    #[test]
+    fn reports_cache_write_failure() {
+        let directory = tempfile::tempdir().unwrap();
+        let blocking_file = directory.path().join("not-a-directory");
+        std::fs::write(&blocking_file, "file").unwrap();
+        assert!(write(
+            &blocking_file.join("cache.json"),
+            date(12),
+            &[asteroid("First")]
+        )
+        .is_err());
+    }
+}
