@@ -1,0 +1,147 @@
+use chrono::NaiveDate;
+
+use crate::{cache, models::Asteroid, nasa::NasaClient};
+
+#[derive(Debug)]
+pub struct Loaded {
+    pub asteroids: Vec<Asteroid>,
+    pub source: String,
+}
+
+pub fn load_data(date: NaiveDate) -> anyhow::Result<Loaded> {
+    let cache_path = cache::app_cache_path();
+    let used_demo_key = std::env::var("NASA_API_KEY")
+        .ok()
+        .filter(|key| !key.trim().is_empty())
+        .is_none();
+
+    fetch_and_cache(date, cache_path, used_demo_key, |date| {
+        NasaClient::new()?.fetch(date)
+    })
+}
+
+fn fetch_and_cache<F>(
+    date: NaiveDate,
+    cache_path: anyhow::Result<std::path::PathBuf>,
+    used_demo_key: bool,
+    fetch: F,
+) -> anyhow::Result<Loaded>
+where
+    F: FnOnce(NaiveDate) -> anyhow::Result<Vec<Asteroid>>,
+{
+    match fetch(date) {
+        Ok(asteroids) => {
+            let mut source = if used_demo_key {
+                "Источник: NASA API (DEMO_KEY; действуют ограничения квоты).".to_owned()
+            } else {
+                "Источник: NASA API.".to_owned()
+            };
+            match cache_path {
+                Ok(path) => {
+                    if let Err(error) = cache::write(&path, date, &asteroids) {
+                        source.push_str(&format!(" Не удалось сохранить кэш: {error:#}"));
+                    }
+                }
+                Err(error) => {
+                    source.push_str(&format!(" Не удалось определить папку кэша: {error:#}"));
+                }
+            }
+            Ok(Loaded { asteroids, source })
+        }
+        Err(api_error) => match cache_path {
+            Ok(path) => match cache::read(&path, date) {
+                Ok(Some(asteroids)) => Ok(Loaded {
+                    asteroids,
+                    source: format!(
+                        "Нет связи с NASA ({api_error:#}). Показан локальный кэш для этой даты."
+                    ),
+                }),
+                Ok(None) => Err(api_error.context("Данных для выбранной даты в кэше нет")),
+                Err(cache_error) => Err(anyhow::anyhow!(
+                    "Не удалось получить данные NASA ({api_error:#}); также не удалось прочитать кэш ({cache_error:#})"
+                )),
+            },
+            Err(cache_error) => Err(anyhow::anyhow!(
+                "Не удалось получить данные NASA ({api_error:#}); также не удалось определить папку кэша ({cache_error:#})"
+            )),
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn date(day: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(2026, 10, day).unwrap()
+    }
+
+    fn asteroid(name: &str) -> Asteroid {
+        Asteroid {
+            name: name.to_owned(),
+            diameter_min_km: None,
+            diameter_max_km: None,
+            velocity_km_s: None,
+            miss_distance_km: None,
+            hazardous: false,
+            approach_time_utc: None,
+        }
+    }
+
+    #[test]
+    fn uses_cache_only_for_the_requested_date_after_fetch_failure() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("cache.json");
+        cache::write(&path, date(12), &[asteroid("Cached")]).unwrap();
+
+        let loaded = fetch_and_cache(date(12), Ok(path.clone()), false, |_| {
+            anyhow::bail!("network unavailable")
+        })
+        .unwrap();
+        assert_eq!(loaded.asteroids, vec![asteroid("Cached")]);
+        assert!(loaded.source.contains("локальный кэш"));
+
+        let error = fetch_and_cache(date(13), Ok(path), false, |_| {
+            anyhow::bail!("network unavailable")
+        })
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("кэше нет"));
+    }
+
+    #[test]
+    fn empty_network_result_is_success_and_cache_write_failure_is_reported() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("cache.json");
+        let loaded =
+            fetch_and_cache(date(12), Ok(path.clone()), false, |_| Ok(Vec::new())).unwrap();
+        assert!(loaded.asteroids.is_empty());
+        assert_eq!(cache::read(&path, date(12)).unwrap(), Some(Vec::new()));
+
+        let blocker = directory.path().join("file");
+        std::fs::write(&blocker, "not a directory").unwrap();
+        let loaded = fetch_and_cache(date(12), Ok(blocker.join("cache.json")), false, |_| {
+            Ok(vec![asteroid("Online")])
+        })
+        .unwrap();
+        assert_eq!(loaded.asteroids, vec![asteroid("Online")]);
+        assert!(loaded.source.contains("Не удалось сохранить кэш"));
+    }
+
+    #[test]
+    fn fetch_success_is_not_blocked_by_unavailable_cache_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let blocker = directory.path().join("file");
+        std::fs::write(&blocker, "not a directory").unwrap();
+
+        let loaded = fetch_and_cache(
+            date(12),
+            Err(anyhow::anyhow!("data directory unavailable")),
+            false,
+            |_| Ok(vec![asteroid("Online")]),
+        )
+        .unwrap();
+        assert_eq!(loaded.asteroids, vec![asteroid("Online")]);
+        assert!(loaded.source.contains("Не удалось определить папку кэша"));
+    }
+}
