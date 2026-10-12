@@ -133,6 +133,18 @@
     .metric-label { margin-bottom: 6px; color: #8195af; font-size: .63rem; font-weight: 750; letter-spacing: .1em; }
     .metric-value { color: #e1ebf8; font-size: .91rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
     .approach { padding-top: 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: .75rem; }
+    .simulation { margin-top: 16px; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: rgba(5, 12, 23, .8); }
+    .simulation-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 14px 0; }
+    .simulation-title { color: #d9e7f6; font-size: .73rem; font-weight: 750; }
+    .simulation-note { color: #8295ad; font-size: .65rem; }
+    .flyby-canvas { display: block; width: 100%; height: 190px; }
+    .simulation-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 11px; padding: 0 14px 12px; }
+    .simulation-toggle { flex: none; padding: 7px 10px; border: 1px solid rgba(87, 225, 211, .24); border-radius: 8px; background: rgba(87, 225, 211, .1); color: var(--aqua); cursor: pointer; font-size: .72rem; font-weight: 700; }
+    .simulation-toggle:hover { background: rgba(87, 225, 211, .17); }
+    .simulation-toggle:disabled { cursor: wait; opacity: .6; }
+    .simulation-timeline { flex: 1 1 110px; min-width: 70px; accent-color: var(--aqua); cursor: pointer; }
+    .simulation-scale { flex: none; max-width: 104px; padding: 6px; border: 1px solid var(--line); border-radius: 7px; background: #0c1625; color: #b9c9db; font-size: .66rem; }
+    .simulation-phase { flex: 1 1 100%; color: #9aabc3; font-size: .66rem; text-align: left; overflow-wrap: anywhere; }
     .empty {
       padding: 52px 20px;
       border: 1px dashed rgba(153, 181, 219, .19);
@@ -281,8 +293,287 @@
       const approach = document.createElement("div");
       approach.className = "approach";
       approach.textContent = `Сближение (UTC): ${asteroid.approach_time_utc ?? "—"}`;
-      card.append(top, measurements, approach);
+      card.append(top, measurements, approach, createJplTrajectorySimulation(asteroid));
       return card;
+    }
+
+    function createJplTrajectorySimulation(asteroid) {
+      const panel = document.createElement("section");
+      panel.className = "simulation";
+      panel.setAttribute("aria-label", `Расчёт траектории астероида ${asteroid.name} относительно Земли`);
+      const hasExactApproachTime = typeof asteroid.approach_time_utc === "string"
+        && /\d{2}:\d{2}/.test(asteroid.approach_time_utc);
+
+      const heading = document.createElement("div");
+      heading.className = "simulation-heading";
+      const title = document.createElement("span");
+      title.className = "simulation-title";
+      title.textContent = "Траектория по JPL Horizons";
+      const note = document.createElement("span");
+      note.className = "simulation-note";
+      const missDistance = Number.parseFloat(asteroid.miss_distance_km);
+      const formattedMissDistance = Number.isFinite(missDistance)
+        ? new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 }).format(missDistance)
+        : "—";
+      note.textContent = `Близкое сближение NASA: ${formattedMissDistance} км`;
+      heading.append(title, note);
+
+      const canvas = document.createElement("canvas");
+      canvas.className = "flyby-canvas";
+      canvas.setAttribute("role", "img");
+      canvas.setAttribute("aria-label", `Эфемеридная траектория ${asteroid.name}`);
+
+      const controls = document.createElement("div");
+      controls.className = "simulation-controls";
+      const toggle = document.createElement("button");
+      toggle.className = "simulation-toggle";
+      toggle.type = "button";
+      toggle.textContent = hasExactApproachTime ? "Загрузить JPL" : "Нет времени сближения";
+      toggle.disabled = !hasExactApproachTime;
+
+      const timeline = document.createElement("input");
+      timeline.className = "simulation-timeline";
+      timeline.type = "range";
+      timeline.min = "0";
+      timeline.max = "1000";
+      timeline.value = "500";
+      timeline.disabled = true;
+      timeline.setAttribute("aria-label", "Время на траектории JPL Horizons");
+
+      const scale = document.createElement("select");
+      scale.className = "simulation-scale";
+      scale.setAttribute("aria-label", "Вертикальный масштаб расстояния");
+      for (const millions of [10, 50, 100, 500, 1000]) {
+        const option = document.createElement("option");
+        option.value = String(millions * 1_000_000);
+        option.textContent = `${millions} млн км`;
+        scale.append(option);
+      }
+      const phase = document.createElement("span");
+      phase.className = "simulation-phase";
+      phase.textContent = hasExactApproachTime
+        ? "Нажмите, чтобы получить расчёт"
+        : "Нет точного времени сближения";
+      controls.append(toggle, timeline, scale, phase);
+      panel.append(heading, canvas, controls);
+
+      const context = canvas.getContext("2d");
+      let trajectory = null;
+      let progress = 0.5;
+      let playing = false;
+      let loading = false;
+      let frame = 0;
+      let lastFrame = 0;
+
+      function currentPoint() {
+        const points = trajectory.points;
+        const at = progress * (points.length - 1);
+        const index = Math.min(Math.floor(at), points.length - 2);
+        const fraction = at - index;
+        const first = points[index];
+        const second = points[index + 1];
+        return {
+          hours: first.hours_from_approach
+            + (second.hours_from_approach - first.hours_from_approach) * fraction,
+          distance: first.distance_km
+            + (second.distance_km - first.distance_km) * fraction
+        };
+      }
+
+      function draw() {
+        const { width, height } = canvas.getBoundingClientRect();
+        if (!width || !context) return;
+        const ratio = Math.min(window.devicePixelRatio || 1, 2);
+        if (canvas.width !== Math.round(width * ratio) || canvas.height !== Math.round(height * ratio)) {
+          canvas.width = Math.round(width * ratio);
+          canvas.height = Math.round(height * ratio);
+        }
+        context.setTransform(ratio, 0, 0, ratio, 0, 0);
+        context.fillStyle = "#050c17";
+        context.fillRect(0, 0, width, height);
+
+        if (!trajectory) {
+          context.font = "13px system-ui, sans-serif";
+          context.textAlign = "center";
+          context.fillStyle = loading ? "#57e1d3" : "#9aabc3";
+          context.fillText(
+            loading ? "Запрашиваем эфемериды NASA/JPL Horizons…" : "Положения астероида ещё не загружены",
+            width / 2,
+            height / 2
+          );
+          return;
+        }
+
+        const left = 52;
+        const right = width - 12;
+        const top = 24;
+        const bottom = height - 35;
+        const rangeKm = Number(scale.value);
+        const xForTime = (hours) => left + ((hours + 6) / 12) * (right - left);
+        const yForDistance = (km) => bottom - Math.min(km, rangeKm) / rangeKm * (bottom - top);
+        const formatMillions = (km) => new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 })
+          .format(km / 1_000_000);
+
+        for (const fraction of [0, 0.5, 1]) {
+          const y = bottom - fraction * (bottom - top);
+          context.beginPath();
+          context.moveTo(left, y);
+          context.lineTo(right, y);
+          context.strokeStyle = "rgba(153, 181, 219, .16)";
+          context.stroke();
+          context.font = "9px system-ui, sans-serif";
+          context.textAlign = "right";
+          context.fillStyle = "#8295ad";
+          context.fillText(`${formatMillions(rangeKm * fraction)} млн`, left - 6, y + 3);
+        }
+
+        context.beginPath();
+        context.moveTo(xForTime(0), top);
+        context.lineTo(xForTime(0), bottom);
+        context.setLineDash([3, 4]);
+        context.strokeStyle = "rgba(255, 198, 109, .5)";
+        context.stroke();
+        context.setLineDash([]);
+
+        context.beginPath();
+        trajectory.points.forEach((point, index) => {
+          const x = xForTime(point.hours_from_approach);
+          const y = yForDistance(point.distance_km);
+          if (index === 0) context.moveTo(x, y);
+          else context.lineTo(x, y);
+        });
+        context.strokeStyle = "rgba(87, 225, 211, .88)";
+        context.lineWidth = 2;
+        context.stroke();
+
+        for (const hours of [-6, -3, 0, 3, 6]) {
+          const x = xForTime(hours);
+          context.beginPath();
+          context.moveTo(x, bottom);
+          context.lineTo(x, bottom + 4);
+          context.strokeStyle = "rgba(153, 181, 219, .4)";
+          context.stroke();
+          context.font = "9px system-ui, sans-serif";
+          context.textAlign = "center";
+          context.fillStyle = "#8295ad";
+          context.fillText(hours === 0 ? "сближение" : `${hours > 0 ? "+" : ""}${hours} ч`, x, height - 8);
+        }
+
+        const earthX = xForTime(0);
+        context.save();
+        context.shadowColor = "rgba(61, 154, 255, .7)";
+        context.shadowBlur = 12;
+        const earthGlow = context.createRadialGradient(earthX - 2, bottom - 2, 1, earthX, bottom, 7);
+        earthGlow.addColorStop(0, "#b8edff");
+        earthGlow.addColorStop(.45, "#4196dc");
+        earthGlow.addColorStop(1, "#155098");
+        context.beginPath();
+        context.arc(earthX, bottom, 6, 0, Math.PI * 2);
+        context.fillStyle = earthGlow;
+        context.fill();
+        context.restore();
+        context.font = "9px system-ui, sans-serif";
+        context.textAlign = "center";
+        context.fillStyle = "#c8d8e9";
+        context.fillText("Земля*", earthX, bottom - 10);
+        context.textAlign = "left";
+        context.fillStyle = "#8295ad";
+        context.fillText("*Земля увеличена; вертикальный масштаб общий.", left, 12);
+
+        const current = currentPoint();
+        const objectX = xForTime(current.hours);
+        const objectY = yForDistance(current.distance);
+        const glow = context.createRadialGradient(objectX, objectY, 1, objectX, objectY, 11);
+        glow.addColorStop(0, "#fff");
+        glow.addColorStop(.25, "#8ff4ed");
+        glow.addColorStop(1, "rgba(87, 225, 211, 0)");
+        context.beginPath();
+        context.arc(objectX, objectY, 11, 0, Math.PI * 2);
+        context.fillStyle = glow;
+        context.fill();
+        context.beginPath();
+        context.arc(objectX, objectY, 4, 0, Math.PI * 2);
+        context.fillStyle = "#d6fffa";
+        context.fill();
+        const distanceText = current.distance > rangeKm
+          ? `>${formatMillions(rangeKm)} млн км`
+          : `${formatMillions(current.distance)} млн км`;
+        phase.textContent = `${current.hours < 0 ? "−" : "+"}${Math.abs(current.hours).toFixed(1)} ч · ${distanceText}`;
+      }
+
+      function animate(timestamp) {
+        if (!playing || !canvas.isConnected || !trajectory) {
+          playing = false;
+          return;
+        }
+        if (!lastFrame) lastFrame = timestamp;
+        progress += Math.min((timestamp - lastFrame) / 1000, 0.1) / 18;
+        lastFrame = timestamp;
+        if (progress >= 1) progress = 0;
+        timeline.value = String(Math.round(progress * 1000));
+        draw();
+        frame = window.requestAnimationFrame(animate);
+      }
+
+      async function loadTrajectory() {
+        if (loading || !hasExactApproachTime) return;
+        loading = true;
+        toggle.disabled = true;
+        toggle.textContent = "Запрос к JPL…";
+        phase.textContent = "Загрузка расчёта";
+        draw();
+        try {
+          const query = new URLSearchParams({
+            name: asteroid.name,
+            approach_time: asteroid.approach_time_utc
+          });
+          const response = await fetch(`/api/trajectory?${query}`);
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.error || "JPL Horizons не вернул траекторию.");
+          if (!Array.isArray(payload.points) || payload.points.length < 2) {
+            throw new Error("В ответе JPL Horizons недостаточно точек траектории.");
+          }
+          trajectory = payload;
+          progress = 0.5;
+          timeline.value = "500";
+          timeline.disabled = false;
+          scale.disabled = false;
+          note.textContent = `${payload.target} · расчёт JPL · эфемериды могут быть неопределённы`;
+          phase.textContent = "Расчёт по текущей орбите JPL";
+          toggle.textContent = "▶ Запустить";
+          toggle.disabled = false;
+          draw();
+        } catch (error) {
+          phase.textContent = error.message;
+          toggle.textContent = "Повторить запрос JPL";
+          toggle.disabled = false;
+        } finally {
+          loading = false;
+        }
+      }
+
+      toggle.addEventListener("click", () => {
+        if (!trajectory) {
+          loadTrajectory();
+          return;
+        }
+        playing = !playing;
+        toggle.textContent = playing ? "Ⅱ Пауза" : "▶ Продолжить";
+        if (playing) {
+          lastFrame = 0;
+          frame = window.requestAnimationFrame(animate);
+        } else {
+          window.cancelAnimationFrame(frame);
+        }
+      });
+      timeline.addEventListener("input", () => {
+        progress = Number(timeline.value) / 1000;
+        draw();
+      });
+      scale.addEventListener("change", draw);
+      new ResizeObserver(draw).observe(canvas);
+      draw();
+      return panel;
     }
 
     form.addEventListener("submit", async (event) => {

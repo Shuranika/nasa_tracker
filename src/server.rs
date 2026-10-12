@@ -7,11 +7,22 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{date, models::Asteroid, service};
+use crate::{
+    date,
+    horizons::{JplHorizons, Trajectory},
+    models::Asteroid,
+    service,
+};
 
 #[derive(Debug, Deserialize)]
 struct DateQuery {
     date: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct TrajectoryQuery {
+    name: String,
+    approach_time: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -30,6 +41,7 @@ pub fn router() -> Router {
     Router::new()
         .route("/", get(index))
         .route("/api/asteroids", get(asteroids))
+        .route("/api/trajectory", get(trajectory))
 }
 
 async fn index() -> Html<&'static str> {
@@ -40,9 +52,8 @@ async fn asteroids(Query(query): Query<DateQuery>) -> Result<Json<AsteroidRespon
     let selected_date = date::parse_date(&query.date)
         .map_err(|error| ApiError(StatusCode::BAD_REQUEST, error.to_string()))?;
     let date_label = selected_date.format("%Y-%m-%d").to_string();
-    let loaded = tokio::task::spawn_blocking(move || service::load_data(selected_date))
+    let loaded = service::load_data(selected_date)
         .await
-        .map_err(|error| ApiError(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
         .map_err(|error| ApiError(StatusCode::BAD_GATEWAY, format!("{error:#}")))?;
 
     Ok(Json(AsteroidResponse {
@@ -50,6 +61,16 @@ async fn asteroids(Query(query): Query<DateQuery>) -> Result<Json<AsteroidRespon
         source: loaded.source,
         asteroids: loaded.asteroids,
     }))
+}
+
+async fn trajectory(Query(query): Query<TrajectoryQuery>) -> Result<Json<Trajectory>, ApiError> {
+    let jpl = JplHorizons::new()
+        .map_err(|error| ApiError(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    let trajectory = jpl
+        .trajectory(&query.name, &query.approach_time)
+        .await
+        .map_err(|error| ApiError(StatusCode::BAD_GATEWAY, format!("{error:#}")))?;
+    Ok(Json(trajectory))
 }
 
 struct ApiError(StatusCode, String);
@@ -81,6 +102,7 @@ mod tests {
         let html = String::from_utf8(body.to_vec()).unwrap();
         assert!(html.contains("NASA Asteroid Tracker"));
         assert!(html.contains("/api/asteroids"));
+        assert!(html.contains("/api/trajectory"));
     }
 
     #[tokio::test]
