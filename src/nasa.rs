@@ -57,7 +57,7 @@ struct MissDistance {
 }
 
 pub struct NasaClient {
-    http: reqwest::blocking::Client,
+    http: reqwest::Client,
     endpoint: String,
     api_key: String,
 }
@@ -72,7 +72,7 @@ impl NasaClient {
     }
 
     fn with_timeout(endpoint: &str, api_key: String, timeout: std::time::Duration) -> Result<Self> {
-        let http = reqwest::blocking::Client::builder()
+        let http = reqwest::Client::builder()
             .timeout(timeout)
             .build()
             .context("Не удалось создать HTTP-клиент NASA")?;
@@ -83,7 +83,7 @@ impl NasaClient {
         })
     }
 
-    pub fn fetch(&self, date: NaiveDate) -> Result<Vec<Asteroid>> {
+    pub async fn fetch(&self, date: NaiveDate) -> Result<Vec<Asteroid>> {
         let date = date.format("%Y-%m-%d").to_string();
         let response = self
             .http
@@ -94,12 +94,14 @@ impl NasaClient {
                 ("api_key", self.api_key.as_str()),
             ])
             .send()
+            .await
             .context("Не удалось связаться с NASA NeoWs")?
             .error_for_status()
             .context("NASA NeoWs вернул ошибочный HTTP-статус")?;
 
         let feed: FeedResponse = response
             .json()
+            .await
             .context("Не удалось разобрать JSON-ответ NASA NeoWs")?;
         parse_feed(feed, &date)
     }
@@ -256,13 +258,14 @@ mod tests {
         assert!(client.is_ok());
     }
 
-    #[test]
-    fn fetch_sends_selected_day_and_maps_local_feed_response() {
+    #[tokio::test]
+    async fn fetch_sends_selected_day_and_maps_local_feed_response() {
         let body = r#"{"near_earth_objects":{"2026-10-12":[{"name":"Local test"}]}}"#;
         let (endpoint, server) = mock_server("200 OK", body, Duration::ZERO);
         let client = NasaClient::with_endpoint(&endpoint, "local-key".to_owned()).unwrap();
         let asteroids = client
             .fetch(NaiveDate::from_ymd_opt(2026, 10, 12).unwrap())
+            .await
             .unwrap();
         let request = server.join().unwrap();
 
@@ -273,12 +276,13 @@ mod tests {
         assert!(request.contains("api_key=local-key"));
     }
 
-    #[test]
-    fn fetch_reports_http_status_and_timeout_errors() {
+    #[tokio::test]
+    async fn fetch_reports_http_status_and_timeout_errors() {
         let (endpoint, server) = mock_server("500 Internal Server Error", "{}", Duration::ZERO);
         let client = NasaClient::with_endpoint(&endpoint, "local-key".to_owned()).unwrap();
         let error = client
             .fetch(NaiveDate::from_ymd_opt(2026, 10, 12).unwrap())
+            .await
             .unwrap_err();
         assert!(format!("{error:#}").contains("500"));
         server.join().unwrap();
@@ -289,6 +293,7 @@ mod tests {
                 .unwrap();
         let error = client
             .fetch(NaiveDate::from_ymd_opt(2026, 10, 12).unwrap())
+            .await
             .unwrap_err();
         assert!(format!("{error:#}").contains("NASA NeoWs"));
         server.join().unwrap();

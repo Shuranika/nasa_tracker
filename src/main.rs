@@ -1,14 +1,16 @@
-mod app;
 mod cache;
 mod date;
+mod horizons;
 mod models;
 mod nasa;
+mod server;
+mod service;
 
-fn main() -> eframe::Result<()> {
-    let options = eframe::NativeOptions::default();
-    eframe::run_native(
-        "NASA Asteroid Tracker",
-        options,
-        Box::new(|_creation_context| Ok(Box::new(app::AsteroidApp::default()))),
-    )
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let address = "127.0.0.1:3000";
+    let listener = tokio::net::TcpListener::bind(address).await?;
+    println!("NASA Asteroid Tracker is available at http://{address}");
+    axum::serve(listener, server::router()).await?;
+    Ok(())
 }
